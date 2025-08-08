@@ -67,7 +67,7 @@
 
 4.  **安装Python依赖**
     ```bash
-    pip install -r requirements.txt
+    pip install numpy opencv-python inputs psutil ur-rtde pyrealsense2
     ```
 
 ## ▶️ 运行程序
