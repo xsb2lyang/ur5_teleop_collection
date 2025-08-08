@@ -1,0 +1,37 @@
+# Ignore compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore system files
+.DS_Store
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*build/
+*dist/
+
+# Virtual Environment
+venv/
+*.venv
+env/
+.env
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# -------- 自定义忽略 --------
+# 忽略所有采集的数据集
+robot_dataset/
+
+# 忽略Jupyter Notebook的检查点
+.ipynb_checkpoints/

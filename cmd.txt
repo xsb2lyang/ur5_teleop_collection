@@ -1,0 +1,1 @@
+sudo $(which python) src/main.py
