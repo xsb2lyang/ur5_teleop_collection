@@ -115,6 +115,9 @@ class UR5Controller:
         # 使用moveL指令移动到该位置，这是一个阻塞指令，完成后才会继续
         self.rtde_c.moveL(init_pose, self.vel, self.acc)
 
+    # ur5_control/ur5_controller.py
+
+    # ... (文件其他部分不变) ...
     def control_gripper(self, open_gripper):
         """
         使用专门的RTDE IO接口来控制Robotiq 2F-85夹爪。
@@ -123,18 +126,20 @@ class UR5Controller:
         try:
             if open_gripper:  # 如果指令是“打开夹爪”
                 print("指令: 打开夹爪")
-                # Robotiq夹爪的控制通常需要设置两个数字输出信号
-                # 这里的具体信号(0或1, True或False)取决于夹爪的配置和接线
                 self.rtde_io.setToolDigitalOut(1, False)
                 self.rtde_io.setToolDigitalOut(0, True)
             else:  # 如果指令是“闭合夹爪”
                 print("指令: 闭合夹爪")
                 self.rtde_io.setToolDigitalOut(1, False)
                 self.rtde_io.setToolDigitalOut(0, False)
-                # 注意：此行代码存在逻辑问题，只在闭合时更新了状态
-                self.gripper_is_open = open_gripper # <-- 添加此行，更新状态
+            
+            # --- 【核心修正】将状态更新移到if/else之外 ---
+            # 这样无论 open_gripper 是 True 还是 False，状态都会被正确更新
+            self.gripper_is_open = open_gripper
+            
         except Exception as e:
             print(f"错误: 控制夹爪时发生错误: {e}")
+   
 
     def getTarget(self, pose, timestep, motion_input):
         """
@@ -188,6 +193,8 @@ class UR5Controller:
         根据Xbox手柄输入移动机器人，并处理暂停/恢复和夹爪控制。
         这个方法会在一个高频循环中被持续调用。
         """
+        #  --- 【新增】初始化一个变量来存储本轮的动作指令 ---
+        action_command = None
         # --- 处理功能按钮 ---
         # A键暂停逻辑: 检测A键是否从“未按下”变为“按下”
         current_a_state = xbox_input[8]
@@ -225,24 +232,37 @@ class UR5Controller:
         self.last_y_state = current_y_state # 更新上一帧状态
 
         # --- 主运动循环 ---
-        if not self.paused: # 如果机器人未被暂停
-            # 安全检查：确保RTDE控制脚本仍在机器人控制器上运行
+        if not self.paused:
             if self.rtde_c.isProgramRunning():
-                # 获取机器人当前TCP位姿
                 self.actual_tcp_pose = self.rtde_r.getActualTCPPose()
-                # 初始化一个时间段，用于同步控制循环
                 t_start = self.rtde_c.initPeriod()
-                # 根据手柄输入计算下一个目标位姿
+                
+                # --- 【核心修改点 1】---
+                # getTarget 方法现在计算的是目标位姿，我们需要的是相对变化。
+                # 我们可以通过计算 servo_target 和 actual_tcp_pose 的差值来得到动作。
                 servo_target = self.getTarget(self.actual_tcp_pose, self.dt, xbox_input)
-                # 发送servoL指令，让机器人向目标位姿伺服运动
-                # servoL是一个非阻塞指令，非常适合用于实时遥操作
+                
+                # 【新增】计算相对位姿变化 (delta_pose)
+                delta_pose = [servo_target[i] - self.actual_tcp_pose[i] for i in range(6)]
+                
+                # 【新增】获取当前夹爪的“动作”意图 (我们想让它开还是关)
+                # 因为夹爪控制是事件驱动的，我们需要一个状态来表示“意图”
+                # 一个简单的方法是直接使用 self.gripper_is_open 的当前状态
+                # 更好的方法是在 control_gripper 中设置一个“目标状态”变量
+                gripper_action = 1.0 if self.gripper_is_open else 0.0 # 保持和您现有格式一致 (1=开, 0=闭)
+                
+                # 【新增】将计算出的指令拼接成一个7维向量
+                action_command = delta_pose + [gripper_action]
+                
+                # 发送servoL指令 (这部分逻辑不变)
                 self.rtde_c.servoL(servo_target, self.vel, self.acc, self.dt, self.lookahead_time, self.gain)
-                # 等待一个控制周期（例如0.002秒），以匹配设定的RTDE频率
+                
                 self.rtde_c.waitPeriod(t_start)
-                self.time_counter += self.dt # 更新时间计数器
+                self.time_counter += self.dt
             else:
-                # 如果脚本停止，打印错误并停止发送指令
                 print("错误: RTDE控制程序已停止运行！无法发送servoL指令。")
-        else: # 如果机器人被暂停
-            # 主动发送伺服停止指令，确保机器人完全停止运动
+        else:
             self.rtde_c.servoStop()
+
+        # --- 【新增】返回计算出的动作指令 ---
+        return action_command
