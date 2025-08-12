@@ -1,7 +1,7 @@
 import numpy as np
 
 # 加载 .npy 文件
-data = np.load('robot_dataset/session_20250807_153113/robot_state.npy')
+data = np.load('robot_dataset/pick_up_the_apple/session_20250811_092406/robot_action.npy')
 
 # 显示数据内容
 print(data)
