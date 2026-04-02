@@ -3,6 +3,9 @@
 import pyzed.sl as sl
 import cv2
 import numpy as np
+import logging
+
+LOGGER = logging.getLogger(__name__)
 
 class ZEDCamera:
     """
@@ -14,7 +17,7 @@ class ZEDCamera:
         :param resolution: 分辨率 ('HD2K', 'HD1080', 'HD720', 'VGA')
         :param fps: 帧率
         """
-        print("正在初始化ZED2i相机...")
+        LOGGER.info("正在初始化 ZED2i 相机...")
         self.zed = sl.Camera()
         self.init_params = sl.InitParameters()
 
@@ -33,13 +36,14 @@ class ZEDCamera:
         # 打开相机
         err = self.zed.open(self.init_params)
         if err != sl.ERROR_CODE.SUCCESS:
-            print(f"打开ZED相机失败，错误码: {err}")
+            LOGGER.error("打开 ZED 相机失败，错误码: %s", err)
             raise ConnectionError("无法连接到ZED相机。")
 
         # 准备用于图像捕获的变量
         self.runtime_params = sl.RuntimeParameters()
         self.image_mat = sl.Mat()
-        print("ZED2i相机初始化完成。")
+        self._released = False
+        LOGGER.info("ZED2i 相机初始化完成。")
 
     def get_frames(self):
         """
@@ -55,15 +59,18 @@ class ZEDCamera:
             # 移除alpha通道，变为BGR
             return color_image[:, :, :3]
         
-        print("警告: 未能从ZED相机抓取到图像。")
+        LOGGER.warning("未能从 ZED 相机抓取到图像。")
         return None
 
     def release(self):
         """
         关闭相机并释放资源。
         """
-        print("正在释放ZED2i相机资源...")
+        if self._released:
+            return
+        LOGGER.info("正在释放 ZED2i 相机资源...")
         self.zed.close()
+        self._released = True
 
 # --- 测试代码 ---
 if __name__ == '__main__':
@@ -72,25 +79,25 @@ if __name__ == '__main__':
         zed_cam = ZEDCamera(resolution='HD720')
 
         # 捕获一帧图像
-        print("正在捕获一帧图像...")
+        LOGGER.info("正在捕获一帧图像...")
         color_img = zed_cam.get_frames()
 
         if color_img is not None:
             # 保存图像
             filename = "zed2i_color_test.png"
             cv2.imwrite(filename, color_img)
-            print(f"ZED2i的彩色图像已保存为 {filename}")
+            LOGGER.info("ZED2i 的彩色图像已保存为 %s", filename)
             
             # 显示图像（可选）
             cv2.imshow("ZED2i Color Image", color_img)
-            print("按任意键关闭窗口...")
+            LOGGER.info("按任意键关闭窗口...")
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
     except ConnectionError as e:
-        print(e)
-    except Exception as e:
-        print(f"发生未知错误: {e}")
+        LOGGER.error("%s", e)
+    except Exception:
+        LOGGER.exception("发生未知错误。")
     finally:
         # 确保即使出错也能尝试释放相机
         if 'zed_cam' in locals() and zed_cam.zed.is_opened():

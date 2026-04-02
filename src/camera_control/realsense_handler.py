@@ -3,7 +3,9 @@
 import pyrealsense2 as rs
 import numpy as np
 import cv2
-import time
+import logging
+
+LOGGER = logging.getLogger(__name__)
 
 class RealSenseCamera:
     """
@@ -16,7 +18,7 @@ class RealSenseCamera:
         :param height: 图像高度
         :param fps: 帧率
         """
-        print("正在初始化RealSense D435相机...")
+        LOGGER.info("正在初始化 RealSense D435 相机...")
         self.pipeline = rs.pipeline()
         self.config = rs.config()
 
@@ -26,12 +28,14 @@ class RealSenseCamera:
 
         # 启动数据流
         self.profile = self.pipeline.start(self.config)
+        self.align = rs.align(rs.stream.color)
+        self._released = False
         
         # 等待几帧，让自动曝光稳定
         for _ in range(15):
             self.pipeline.wait_for_frames()
 
-        print("RealSense D435 相机初始化完成。")
+        LOGGER.info("RealSense D435 相机初始化完成。")
 
     def get_frames(self):
         """
@@ -43,14 +47,13 @@ class RealSenseCamera:
             frames = self.pipeline.wait_for_frames()
             
             # 对齐深度帧到彩色帧
-            align = rs.align(rs.stream.color)
-            aligned_frames = align.process(frames)
+            aligned_frames = self.align.process(frames)
 
             depth_frame = aligned_frames.get_depth_frame()
             color_frame = aligned_frames.get_color_frame()
 
             if not depth_frame or not color_frame:
-                print("警告: 未能捕获到有效的帧。")
+                LOGGER.warning("未能捕获到有效的 RealSense 帧。")
                 return None, None
 
             # 将图像转换为numpy数组
@@ -58,16 +61,19 @@ class RealSenseCamera:
             color_image = np.asanyarray(color_frame.get_data())
             
             return color_image, depth_image
-        except Exception as e:
-            print(f"从RealSense捕获帧时发生错误: {e}")
+        except Exception:
+            LOGGER.exception("从 RealSense 捕获帧时发生错误。")
             return None, None
             
     def release(self):
         """
         停止数据流并释放相机资源。
         """
-        print("正在释放RealSense D435相机资源...")
+        if self._released:
+            return
+        LOGGER.info("正在释放 RealSense D435 相机资源...")
         self.pipeline.stop()
+        self._released = True
 
 # --- 测试代码 ---
 if __name__ == '__main__':
@@ -75,14 +81,14 @@ if __name__ == '__main__':
     d435_cam = RealSenseCamera()
     
     # 获取一帧图像
-    print("正在捕获一帧图像...")
+    LOGGER.info("正在捕获一帧图像...")
     color_img, depth_img = d435_cam.get_frames()
 
     if color_img is not None and depth_img is not None:
         # 保存彩色图像
         color_filename = "d435_color_test.png"
         cv2.imwrite(color_filename, color_img)
-        print(f"彩色图像已保存为 {color_filename}")
+        LOGGER.info("彩色图像已保存为 %s", color_filename)
 
         # 将深度图可视化并保存
         # 深度图是16位的，直接显示是黑的，需要转换成8位图
@@ -92,12 +98,12 @@ if __name__ == '__main__':
         )
         depth_filename = "d435_depth_visualized.png"
         cv2.imwrite(depth_filename, depth_colormap)
-        print(f"深度图的可视化版本已保存为 {depth_filename}")
+        LOGGER.info("深度图的可视化版本已保存为 %s", depth_filename)
         
         # 显示图像（可选）
         cv2.imshow("D435 Color Image", color_img)
         cv2.imshow("D435 Depth Image", depth_colormap)
-        print("按任意键关闭窗口...")
+        LOGGER.info("按任意键关闭窗口...")
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 

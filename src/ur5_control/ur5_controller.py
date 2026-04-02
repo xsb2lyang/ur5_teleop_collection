@@ -13,6 +13,9 @@ import sys
 import math
 # 导入threading库，用于将耗时操作（如夹爪IO）放入子线程，防止阻塞主运动控制循环
 import threading
+import logging
+
+LOGGER = logging.getLogger(__name__)
 
 # 定义机器人末端执行器（TCP）的运动空间限制 (单位: 米, 弧度)
 # 用于防止机器人移动到危险或不期望的位置
@@ -67,7 +70,7 @@ class UR5Controller:
         self.rtde_c = RTDEControl(self.robot_ip, self.rtde_frequency, self.flags, self.ur_cap_port, self.rt_control_priority)
         # 初始化独立的IO控制接口，专门用于控制数字/模拟IO（例如夹爪）
         self.rtde_io = RTDEIOInterface(self.robot_ip)
-        print("RTDE运动和IO接口均已成功初始化。")
+        LOGGER.info("RTDE 运动和IO接口均已成功初始化。")
         
         # --- 状态变量 ---
         self.paused = False         # 暂停标志位
@@ -76,6 +79,8 @@ class UR5Controller:
         self.last_x_state = 0       # 上一帧X键的状态
         self.last_y_state = 0       # 上一帧Y键的状态
         self.gripper_is_open = True # 夹爪状态的标志位，True为张开，False为闭合
+        self._gripper_lock = threading.Lock()
+        self._servo_stopped_due_to_pause = False
 
         # --- 初始化操作 ---
         # 根据操作系统设置当前进程的优先级为实时，以保证控制稳定性
@@ -98,9 +103,9 @@ class UR5Controller:
             try:
                 # 尝试设置调度策略为SCHED_FIFO（先入先出），这是一种实时策略
                 os.sched_setscheduler(0, os.SCHED_FIFO, param)
-                print("进程实时优先级已设置为: %u" % rt_app_priority)
+                LOGGER.info("进程实时优先级已设置为: %u", rt_app_priority)
             except OSError:  # 如果设置失败（通常是因为权限不足）
-                print("警告: 设置实时进程调度失败。请尝试使用 'sudo' 运行。")
+                LOGGER.warning("设置实时进程调度失败。请尝试使用 'sudo' 运行。")
 
     def init_position(self):
         """
@@ -123,22 +128,23 @@ class UR5Controller:
         使用专门的RTDE IO接口来控制Robotiq 2F-85夹爪。
         这个调用是异步的，不会中断运动控制。
         """
-        try:
-            if open_gripper:  # 如果指令是“打开夹爪”
-                print("指令: 打开夹爪")
-                self.rtde_io.setToolDigitalOut(1, False)
-                self.rtde_io.setToolDigitalOut(0, True)
-            else:  # 如果指令是“闭合夹爪”
-                print("指令: 闭合夹爪")
-                self.rtde_io.setToolDigitalOut(1, False)
-                self.rtde_io.setToolDigitalOut(0, False)
-            
-            # --- 【核心修正】将状态更新移到if/else之外 ---
-            # 这样无论 open_gripper 是 True 还是 False，状态都会被正确更新
-            self.gripper_is_open = open_gripper
-            
-        except Exception as e:
-            print(f"错误: 控制夹爪时发生错误: {e}")
+        with self._gripper_lock:
+            try:
+                if open_gripper:  # 如果指令是“打开夹爪”
+                    LOGGER.info("指令: 打开夹爪")
+                    self.rtde_io.setToolDigitalOut(1, False)
+                    self.rtde_io.setToolDigitalOut(0, True)
+                else:  # 如果指令是“闭合夹爪”
+                    LOGGER.info("指令: 闭合夹爪")
+                    self.rtde_io.setToolDigitalOut(1, False)
+                    self.rtde_io.setToolDigitalOut(0, False)
+                
+                # --- 【核心修正】将状态更新移到if/else之外 ---
+                # 这样无论 open_gripper 是 True 还是 False，状态都会被正确更新
+                self.gripper_is_open = open_gripper
+                
+            except Exception:
+                LOGGER.exception("控制夹爪时发生错误。")
    
 
     def getTarget(self, pose, timestep, motion_input):
@@ -193,6 +199,9 @@ class UR5Controller:
         根据Xbox手柄输入移动机器人，并处理暂停/恢复和夹爪控制。
         这个方法会在一个高频循环中被持续调用。
         """
+        if xbox_input is None or len(xbox_input) < 14:
+            return None
+
         #  --- 【新增】初始化一个变量来存储本轮的动作指令 ---
         action_command = None
         # --- 处理功能按钮 ---
@@ -200,14 +209,14 @@ class UR5Controller:
         current_a_state = xbox_input[8]
         if current_a_state == 1 and self.last_a_state == 0:
             self.paused = True
-            print("机器人已暂停。")
+            LOGGER.info("机器人已暂停。")
         self.last_a_state = current_a_state # 更新上一帧状态
 
         # B键恢复逻辑: 检测B键是否从“未按下”变为“按下”
         current_b_state = xbox_input[9]
         if current_b_state == 1 and self.last_b_state == 0:
             self.paused = False
-            print("机器人已恢复。")
+            LOGGER.info("机器人已恢复。")
         self.last_b_state = current_b_state # 更新上一帧状态
         
         # X/Y键夹爪控制
@@ -233,6 +242,7 @@ class UR5Controller:
 
         # --- 主运动循环 ---
         if not self.paused:
+            self._servo_stopped_due_to_pause = False
             if self.rtde_c.isProgramRunning():
                 self.actual_tcp_pose = self.rtde_r.getActualTCPPose()
                 t_start = self.rtde_c.initPeriod()
@@ -260,9 +270,31 @@ class UR5Controller:
                 self.rtde_c.waitPeriod(t_start)
                 self.time_counter += self.dt
             else:
-                print("错误: RTDE控制程序已停止运行！无法发送servoL指令。")
+                LOGGER.error("RTDE控制程序已停止运行，无法发送 servoL 指令。")
         else:
-            self.rtde_c.servoStop()
+            if not self._servo_stopped_due_to_pause:
+                self.rtde_c.servoStop()
+                self._servo_stopped_due_to_pause = True
 
         # --- 【新增】返回计算出的动作指令 ---
         return action_command
+
+    def shutdown(self):
+        """
+        安全停止并释放 RTDE 连接。
+        """
+        try:
+            self.rtde_c.servoStop()
+        except Exception:
+            pass
+
+        try:
+            self.rtde_c.stopScript()
+        except Exception:
+            pass
+
+        for interface in (self.rtde_c, self.rtde_r, self.rtde_io):
+            try:
+                interface.disconnect()
+            except Exception:
+                pass

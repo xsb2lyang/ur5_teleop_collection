@@ -30,6 +30,9 @@ from inputs import get_gamepad
 import math
 # 导入 threading 库，用于在后台线程中持续监听手柄事件，避免阻塞主程序
 import threading
+import logging
+
+LOGGER = logging.getLogger(__name__)
 
 class XboxController(object):
     """
@@ -69,6 +72,7 @@ class XboxController(object):
         self.RightDPad = 0      # D-Pad 右
         self.UpDPad = 0         # D-Pad 上
         self.DownDPad = 0       # D-Pad 下
+        self._running = True
 
         # --- 创建并启动后台监听线程 ---
         # target=self._monitor_controller 指定了线程要执行的方法
@@ -114,9 +118,14 @@ class XboxController(object):
         这个方法在后台线程中无限循环运行，
         负责捕获手柄的原始事件，并更新类的状态变量。
         """
-        while True:
-            # get_gamepad() 是一个阻塞函数，它会等待直到有手柄事件发生
-            events = get_gamepad()
+        while self._running:
+            try:
+                # get_gamepad() 是一个阻塞函数，它会等待直到有手柄事件发生
+                events = get_gamepad()
+            except Exception:
+                LOGGER.debug("读取手柄事件失败，将继续重试。", exc_info=True)
+                continue
+
             # 遍历所有捕获到的事件
             for event in events:
                 # --- 摇杆事件 ---
@@ -172,11 +181,18 @@ class XboxController(object):
                 elif event.code == 'BTN_TRIGGER_HAPPY4':
                     self.DownDPad = event.state
 
+    def stop(self):
+        """
+        请求后台监听线程停止。
+        """
+        self._running = False
+
 # --- 模块独立测试代码 ---
 # 当直接运行 `python xbox_control.py` 时，以下代码会被执行
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
     # 创建一个XboxController实例
     joy = XboxController()
     # 无限循环，持续打印手柄状态，用于测试
     while True:
-        print(joy.read())
+        LOGGER.info("%s", joy.read())

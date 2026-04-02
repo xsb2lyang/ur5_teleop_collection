@@ -14,6 +14,9 @@ __pycache__/
 *.pyd
 *build/
 *dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
 
 # Virtual Environment
 venv/
@@ -32,6 +35,7 @@ env/
 # -------- 自定义忽略 --------
 # 忽略所有采集的数据集
 robot_dataset/
+logs/
 
 # 忽略Jupyter Notebook的检查点
 .ipynb_checkpoints/
