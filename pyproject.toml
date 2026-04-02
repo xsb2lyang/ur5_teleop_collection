@@ -1,0 +1,14 @@
+[project]
+name = "ur5-teleop-collection"
+version = "0.1.0"
+description = "UR5/UR5e teleoperation and multimodal data collection toolkit."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "taizun" }
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
